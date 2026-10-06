@@ -79,11 +79,6 @@ def generate_forecast(data: pd.DataFrame, weeks_ahead: int = 8):
 
 
 # ── Stockout summary ─────────────────────────────────────────────────────────
-# Logic:
-#   stock_est    = (16-week historical avg sales) × store-type stock buffer weeks
-#   recent_burn  = last 4 weeks avg (actual consumption rate)
-#   weeks_cover  = stock_est / recent_burn
-# Stores where recent demand spiked above historical get lower cover → realistic variation
 @st.cache_data
 def stockout_summary(df: pd.DataFrame) -> pd.DataFrame:
     c_hist   = last_date - timedelta(weeks=16)
@@ -100,8 +95,8 @@ def stockout_summary(df: pd.DataFrame) -> pd.DataFrame:
     s = info.join(hist_avg).join(recent_avg)
 
     s["stock_wks"]   = s["store_type"].map(STOCK_WEEKS).fillna(2.5)
-    s["stock_est"]   = s["hist_avg"] * s["stock_wks"]          # inventory value ($)
-    s["weeks_cover"] = s["stock_est"] / s["recent_avg"].clip(1) # how many weeks stock lasts
+    s["stock_est"]   = s["hist_avg"] * s["stock_wks"]
+    s["weeks_cover"] = s["stock_est"] / s["recent_avg"].clip(1)
     s["demand_chg"]  = (s["recent_avg"] - s["hist_avg"]) / s["hist_avg"].clip(1) * 100
 
     def status(w):
@@ -216,7 +211,6 @@ with col1:
 
     fig = go.Figure()
 
-    # Uncertainty band
     xs = [pd.Timestamp(d) for d in future_dates]
     fig.add_trace(go.Scatter(
         x=xs + xs[::-1],
@@ -228,7 +222,6 @@ with col1:
         hoverinfo="skip",
     ))
 
-    # Actual sales
     fig.add_trace(go.Scatter(
         x=hist["date"], y=hist["weekly_sales"],
         mode="lines",
@@ -236,7 +229,6 @@ with col1:
         line=dict(color="#00b894", width=2.5),
     ))
 
-    # Forecast line
     fig.add_trace(go.Scatter(
         x=[hist["date"].iloc[-1]] + xs,
         y=[hist["weekly_sales"].iloc[-1]] + fcst_vals,
@@ -246,19 +238,17 @@ with col1:
         marker=dict(size=5, color="#00b894"),
     ))
 
-    # Upper / lower bounds (thin lines)
     fig.add_trace(go.Scatter(
         x=xs, y=upper_vals, mode="lines",
         line=dict(color="rgba(0,184,148,0.3)", width=1, dash="dot"),
-        name="Upper bound", hoverinfo="skip",
+        name="Upper bound", hoverinfo="skip", showlegend=False,
     ))
     fig.add_trace(go.Scatter(
         x=xs, y=lower_vals, mode="lines",
         line=dict(color="rgba(0,184,148,0.3)", width=1, dash="dot"),
-        name="Lower bound", hoverinfo="skip",
+        name="Lower bound", hoverinfo="skip", showlegend=False,
     ))
 
-    # Holiday stars
     if not hols.empty:
         fig.add_trace(go.Scatter(
             x=hols["date"], y=hols["weekly_sales"],
@@ -270,7 +260,6 @@ with col1:
             marker=dict(color="#fdcb6e", size=11, symbol="star"),
         ))
 
-    # Today vline
     fig.add_vline(
         x=last_date, line_dash="dot", line_color="rgba(150,150,150,0.6)",
         annotation_text="Today", annotation_position="top left",
@@ -284,7 +273,7 @@ with col1:
         yaxis=dict(tickformat="$,.0f", gridcolor="rgba(128,128,128,0.15)", title="Weekly Sales"),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.3, font_size=11),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.38, x=0, font_size=11),
         hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -344,7 +333,6 @@ with col2:
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Season breakdown
     if not season_avg.empty:
         s_df = season_avg.reset_index().rename(columns={"season": "Season", "weekly_sales": "Avg/wk"})
         s_df["vs overall"] = ((s_df["Avg/wk"] - overall) / overall * 100).map(lambda x: f"{x:+.1f}%")
@@ -361,7 +349,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 col3, col4 = st.columns([1, 1], gap="large")
 
 
-# ── Planning panel ────────────────────────────────────────────────────────────
 with col3:
     st.markdown('<p class="section-header">📋 Planning</p>', unsafe_allow_html=True)
 
@@ -400,11 +387,9 @@ with col3:
     st.caption(f"Assumptions: ${AVG_UNIT_PRICE}/unit · ${SALES_PER_STAFF_HR:,} sales/staff hr · +10% safety buffer on orders")
 
 
-# ── Stockout alerts ───────────────────────────────────────────────────────────
 with col4:
     st.markdown('<p class="section-header">🔔 Stockout Alerts</p>', unsafe_allow_html=True)
 
-    # Summary counts
     s1, s2, s3 = st.columns(3)
     s1.metric("🔴 Critical",  crit_n, "Immediate action")
     s2.metric("🟡 Low stock", low_n,  "Order this week")
@@ -442,7 +427,6 @@ with col4:
                       delta_color="inverse" if dchg > 0 else "normal")
             mc.metric("Avg weekly (recent)", f"${row['recent_avg']:,.0f}")
 
-            # Dept breakdown
             c_r = last_date - timedelta(weeks=4)
             dept_b = (
                 df_all[(df_all["store_id"] == sid) & (df_all["date"] > c_r)]
@@ -457,7 +441,6 @@ with col4:
             st.caption("**Top departments by sales (last 4 weeks)**")
             st.dataframe(dept_b, hide_index=True, use_container_width=True)
 
-            # Mini trend chart
             trend_data = (
                 df_all[df_all["store_id"] == sid]
                 .groupby("date")["weekly_sales"].sum()
@@ -482,7 +465,6 @@ with col4:
             st.caption("**Store-level weekly sales — last 16 weeks**")
             st.plotly_chart(fig_t, use_container_width=True, key=f"trend_chart_{sid}")
 
-            # Action buttons — only shown for stores that need action
             if status in ("Critical", "Low stock"):
                 rk = f"reorder_{sid}"
                 vk = f"reviewed_{sid}"
